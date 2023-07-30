@@ -27,7 +27,7 @@ $SetupTAG = ""<ENTITY>""
 #=======================================================================================================================================
 
 # GLPI-Agent version
-$SetupVersion = "1.5-git1bd80d47"
+$SetupVersion = "1.5"
 $SetupServer = "https://<ADDRESS_OF_YOUR_SERVER>"
 $hostname = [System.Net.Dns]::GetHostName().ToUpper()
 $ServiceName = "glpi-agent"
