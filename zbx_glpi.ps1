@@ -1,21 +1,18 @@
 <# 
 .SYNOPSIS 
-  Uninstall FusionInventory.
-  Install GLPI Agent.
+	Uninstall FusionInventory.
+	Install GLPI Agent.
 .DESCRIPTION 
-  Uninstall FusionInventory.
-  Install GLPI Agent.
+	Uninstall FusionInventory.
+	Install GLPI Agent.
 .NOTES  
-  File Name:  InstallGLPIAgent.ps1 
-  Author:     Roberto Marcelino
-  Requires:   PowerShell v5+
-  Version:    2.1
+	File Name:  zbx_glpi.ps1 
+	Author:     ISL Suporte Limitada
+	Requires:   PowerShell v5
+	Version:    2.5
 #>
 
 #=======================================================================================================================================
-param (
-  [string]$IsServer
-)
 
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
 
@@ -27,30 +24,42 @@ $SetupTAG = "<ENTITY>"
 #=======================================================================================================================================
 
 # GLPI-Agent version
-$SetupVersion = "1.5"
+$SetupVersion = "1.7"
 $SetupServer = "https://<ADDRESS_OF_YOUR_SERVER>"
 $hostname = [System.Net.Dns]::GetHostName().ToUpper()
 $ServiceName = "glpi-agent"
 
-if ([string]::IsNullOrEmpty($IsServer)) {
-  $SetupOptions = "/quiet ADD_FIREWALL_EXCEPTION=1 DELAYTIME=60 EXECMODE=1 RUNNOW=1 SCAN_HOMEDIRS=1 SERVER=$SetupServer"
-} else {
-  $SetupOptions = "/quiet ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=ALL DELAYTIME=60 EXECMODE=1 RUNNOW=1 SCAN_HOMEDIRS=1 SERVER=$SetupServer"
+#=======================================================================================================================================
+function IsWindowsServer {
+	if ($PSVersion -ge 3) {
+		$os = Get-CimInstance -ClassName Win32_OperatingSystem
+	} else {
+		$os = Get-WmiObject -Class Win32_OperatingSystem
+	}
+	return $os.ProductType -ne 1  # True para servidores, False para estações de trabalho (clientes)
 }
 
 #=======================================================================================================================================
-if ([System.Enum]::IsDefined([Net.SecurityProtocolType], "Tls12")) {
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+if (IsWindowsServer) {
+	$SetupOptions = "/quiet ADD_FIREWALL_EXCEPTION=1 AGENTMONITOR=1 ADDLOCAL=ALL BACKEND_COLLECT_TIMEOUT=500 DELAYTIME=60 EXECMODE=2 NO_SSL_CHECK=1 RUNNOW=1 SCAN_HOMEDIRS=1 SERVER=$SetupServer/marketplace/glpiinventory/"
 } else {
-  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
+	$SetupOptions = "/quiet ADD_FIREWALL_EXCEPTION=1 ADDLOCAL=ALL BACKEND_COLLECT_TIMEOUT=500 DELAYTIME=60 EXECMODE=2 NO_SSL_CHECK=1 RUNNOW=1 SCAN_HOMEDIRS=1 SERVER=$SetupServer/marketplace/glpiinventory/"
 }
 
 #=======================================================================================================================================
-$SetupInstallDir = if ([System.Environment]::Is64BitOperatingSystem) {
-    ${env:ProgramFiles}
-  } else {
-    ${env:ProgramFiles(x86)}
-  }
+$originalValue = [Net.ServicePointManager]::SecurityProtocol
+if ([System.Enum]::IsDefined([Net.SecurityProtocolType], "Tls13")) {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls13
+} elseif ([System.Enum]::IsDefined([Net.SecurityProtocolType], "Tls12")) {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+} else {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls12
+}
+[System.Net.ServicePointManager]::ServerCertificateValidationCallback = {$true}
+
+#=======================================================================================================================================
+$SetupInstallDir = if ($is64BitOS) { $env:ProgramFiles } else { $env:ProgramFilesX86 }
 
 $regkeyFusion = if (Test-Path -Path "HKLM:\SOFTWARE\Wow6432Node\FusionInventory-Agent") {
     "HKLM:\SOFTWARE\Wow6432Node\FusionInventory-Agent"
@@ -115,34 +124,42 @@ function Stop-ProcessOrService {
 
 #=======================================================================================================================================
 function Get-InstalledPath {
-  param(
-    [string]$productName = "GLPI-Agent"
-  )
-  $localPath = if ([Environment]::Is64BitOperatingSystem) { "${env:ProgramFiles}\$productName" } else { "${env:ProgramFiles(x86)}\$productName" }
-  if (Test-Path -Path "${env:ProgramFiles}\$productName") {
-    $InstalledPath = "${env:ProgramFiles}\$productName"
-  } elseif (Test-Path -Path "${env:ProgramFiles(x86)}\$productName") {
-    $InstalledPath = "${env:ProgramFiles(x86)}\$productName"
-    }
-  if (-not [string]::IsNullOrEmpty($InstalledPath)) {
-        return $InstalledPath
-    } else {
-    return $localPath
-  }
+	param(
+		[string]$productName = "GLPI-Agent"
+	)
+	$localPath = Join-Path -Path $SetupInstallDir -ChildPath $productName
+	if (Test-Path -Path $localPath) {
+		return $localPath
+	} else {
+		return $localPath
+	}
 }
 
 #=======================================================================================================================================
 function Get-InstalledVersion {
-  $installedVersion = "1.0"
-    if (Test-Path -Path 'HKLM:\SOFTWARE\Wow6432Node\GLPI-Agent\Installer') { 
-        $installedVersion = (Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\Wow6432Node\GLPI-Agent\Installer' -Name 'Version') -as [string]
-    } elseif (Test-Path -Path 'HKLM:\SOFTWARE\GLPI-Agent\Installer') {
-        $installedVersion = (Get-ItemPropertyValue -Path 'HKLM:\SOFTWARE\GLPI-Agent\Installer' -Name 'Version') -as [string]
-    }
-    if ([string]::IsNullOrEmpty($installedVersion)) {
-        $installedVersion = "1.0"
-    }
-    return $installedVersion
+	$registryPaths = @(
+		'HKLM:\SOFTWARE\Wow6432Node\GLPI-Agent\Installer',
+		'HKLM:\SOFTWARE\GLPI-Agent\Installer'
+	)
+	$installedVersion = "1.0"
+	foreach ($path in $registryPaths) {
+		if (Test-Path -Path $path) {
+			try {
+				$property = Get-ItemProperty -Path $path
+				$installedVersion = $property.Version -as [string]
+				if (-not [string]::IsNullOrEmpty($installedVersion)) {
+					break
+				}
+			}
+			catch {
+				Write-Warning "Um erro ocorreu ao recuperar a versão instalada de $path"
+			}
+		}
+	}
+	if ([string]::IsNullOrEmpty($installedVersion)) {
+		$installedVersion = "1.0"
+	}
+	return $installedVersion
 }
 
 #=======================================================================================================================================
@@ -212,26 +229,6 @@ function Install-GLPI-Agent {
 }
 
 #=======================================================================================================================================
-function Set-ServiceRecovery {
-  [alias('Set-Recovery')]
-  param (
-    [string] [Parameter(Mandatory=$true)] $ServiceDisplayName,
-    [string] [Parameter(Mandatory=$true)] $Server,
-    [string] $action1 = "restart",
-    [int] $time1 = 120000, # in milliseconds
-    [string] $action2 = "restart",
-    [int] $time2 = 120000, # in milliseconds
-    [string] $actionLast = "restart",
-    [int] $timeLast = 120000, # in milliseconds
-    [int] $resetCounter = 4000 # in seconds
-  )
-  Get-CimInstance -Class Win32_Service -ComputerName $Server | Where-Object {$_.DisplayName -imatch $ServiceDisplayName} | ForEach-Object {
-    $action = "$action1/$time1/$action2/$time2/$actionLast/$timeLast"
-    $output = & sc.exe "\\$Server" failure $($_.Name) actions=$action reset=$resetCounter
-  }
-}
-
-#=======================================================================================================================================
 if (Test-Path -Path "$SetupInstallDir\GLPI-Agent\perl") {
     $InstalledVersion = Get-InstalledVersion
     Stop-ProcessOrService -processName glpi-agent
@@ -239,22 +236,24 @@ if (Test-Path -Path "$SetupInstallDir\GLPI-Agent\perl") {
     $InstalledVersion = "1.0"
 }
 
-$mpPreference = Get-MpPreference
-Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+if ([Environment]::OSVersion.Version -ge (New-Object System.Version "10.0")) {
+	if (-not (IsWindowsServer)) {
+		$mpPreference = Get-MpPreference
+		Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
+	}
+}
 
 try {
     Install-GLPI-Agent -InstalledVersion $InstalledVersion -SetupVersion $SetupVersion -SetupOptions $SetupOptions -InstallServerPath $InstallServerPath -SetupTAG $SetupTAG
 } finally {
-    Set-MpPreference -DisableRealtimeMonitoring $mpPreference.DisableRealtimeMonitoring -ErrorAction SilentlyContinue
-}
-
-if (Test-Path -Path "$SetupInstallDir\GLPI-Agent\perl") {
-    Start-Service "glpi-agent"
+	if ([Environment]::OSVersion.Version -ge (New-Object System.Version "10.0")) {
+		if (-not (IsWindowsServer)) {
+			Set-MpPreference -DisableRealtimeMonitoring $mpPreference.DisableRealtimeMonitoring -ErrorAction SilentlyContinue
+		}
+	}
 }
 
 #=======================================================================================================================================
-
-Set-ServiceRecovery -ServiceDisplayName $servicename -Server $hostname
 
 [System.GC]::Collect()
 Get-Variable | Where-Object { $_.Name -notlike 'Microsoft.PowerShell.*' -and $_.Name -notlike '_' } | Remove-Variable -ErrorAction SilentlyContinue
