@@ -36,7 +36,7 @@ function IsWindowsServer {
 	} else {
 		$os = Get-WmiObject -Class Win32_OperatingSystem
 	}
-	return $os.ProductType -ne 1  # True para servidores, False para estações de trabalho (clientes)
+	return $os.ProductType -ne 1   # True for servers, False for workstations
 }
 
 #=======================================================================================================================================
